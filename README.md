@@ -1,2 +1,2 @@
 # Cache-Web-Proxy-Server
-Using SCTP protocol
+Using TCP protocol
