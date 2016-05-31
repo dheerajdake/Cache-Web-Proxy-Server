@@ -1,0 +1,11 @@
+1. First compile all the c files to create object files
+  	gcc -c filename.c
+
+2. Create a output file using the object files
+        gcc filename.o -o output -lpthread
+
+gcc -E
+
+
+
+line 190 --> path problem, set the correct path

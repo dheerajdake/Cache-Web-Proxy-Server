@@ -1,0 +1,250 @@
+#include<stdio.h>
+#include<stdlib.h>
+#include<unistd.h>
+#include<sys/types.h>
+#include<sys/socket.h>
+#include<arpa/inet.h>
+#include<string.h>
+#include<strings.h>
+#include<fcntl.h>
+#include<pthread.h>
+
+#define INDEX	    "/index.html"
+#define THREADS      15
+
+static char* HTTP_response = 
+"HTTP/1.1 200 OK\r\n"
+"Server: 207httpd/0.0.1\r\n"
+"Connection: close\r\n"
+"Content-Type: %s\r\n"
+"Content-Length: %d\r\n"
+"\r\n";
+
+static char* bad_request_response = 
+"HTTP/1.1 400 File not found\n"
+"Server: 207httpd/0.0.1\r\n"
+"Connection: close\r\n"
+"Content-type: text/html\n"
+"\n"
+"<html>"
+"<body>"
+"<h1>404 Not Found</h1>"
+"</body>"
+"</html>";
+
+static char* directory;
+
+/*Content-Type function*/
+const char* http_get_mime(const char* fname)
+{
+	const char *extf = strrchr(fname, '.');
+	if (extf == NULL) 
+	{
+		return "application/octet-stream";
+	} 
+	else if (strcmp(extf, ".html") == 0) 
+	{
+		return "text/html";
+	} 
+	else if (strcmp(extf, ".jpg") == 0) 
+	{
+		return "image/jpeg";
+	} 
+	else if (strcmp(extf, ".gif") == 0) 
+	{
+		return "image/gif";
+	} 
+	else 
+	{
+		return "application/octet-stream";
+	}
+}
+
+
+/*Content-Length function*/
+int http_get_filesize(FILE *fp)
+{
+	int fsize;
+	fseek(fp, 0, SEEK_END);	
+	fsize = ftell(fp);
+	rewind(fp);
+	return fsize;
+}
+
+
+void *handle_GET(void *getsock)
+{
+	char GET_request[4096], web_data[4096], active_dir[4096];
+
+	/*Clear the buffers*/
+	bzero(GET_request, sizeof(GET_request));
+	bzero(active_dir, sizeof(active_dir));
+	bzero(web_data, sizeof(active_dir));
+
+	int rcv, fd, rd_data;
+	char *tokens[3], *ROOT = directory;
+	int sock = *(int *)getsock;
+	
+	/*Get the request*/
+	rcv=read(sock, GET_request, sizeof(GET_request));
+	if (rcv < 0)    
+	{
+		perror("Receive failed");
+        }
+	else if (rcv == 0)
+	{
+		perror("Peer exited!");
+	}
+	else   
+	{
+        	printf("%s\n", GET_request);	//print the GET request
+	        tokens[0] = strtok(GET_request, " "); //Delimiter - SP
+
+		/*Check for GET*/       		
+		if (strncmp(tokens[0], "GET", 3) == 0)
+        	{
+			/*Check for the path*/
+		        tokens[1] = strtok (NULL, " "); //Delimiter - SP
+        	        tokens[2] = strtok (NULL, " \r\n"); //Delimiter -SP\r\n
+
+			//Default URL mapping
+        	        if (strncmp(tokens[1], "/\0", 2) == 0)
+			{
+	                 	tokens[1] = INDEX;         
+			}
+
+			//Mapping images to img
+			if(strncmp(tokens[1], "/images", 7) == 0)
+			{
+				/*Replace images with img and redirect the path*/				
+				char split[50];
+				char image_path[50] = "/img";
+				bzero(split, sizeof(split));  
+				strncpy(split, &tokens[1][7], strlen(tokens[1])-7);
+				strcat(image_path, split);
+				strcpy(tokens[1], image_path);
+			}
+			
+			/*path specified*/			
+			strcpy(active_dir, ROOT);		       //specified path
+		        strcpy(&active_dir[strlen(ROOT)], tokens[1]);  //Current GET requestfile path
+		        printf("Accessing: %s\n", active_dir);
+
+       		        if ((fd=open(active_dir, O_RDONLY)) > 0)    //FILE FOUND
+	                {
+			    FILE *file;
+                            file = fopen(active_dir, "r");
+
+			    /*Send HTTP response headers*/
+			    char headers[500];
+			    bzero(headers, sizeof(headers));
+			    sprintf(headers, HTTP_response, http_get_mime(tokens[1]), http_get_filesize(file));
+	                    write(sock, headers, strlen(headers));
+			
+			    /*Transmit the data*/
+               		    while ((rd_data = read(fd, web_data, sizeof(web_data))) > 0)
+			    {
+               			        write (sock, web_data, rd_data);
+		 	    }
+			 }
+               		else
+			{
+				/*File not present*/
+				write(sock, bad_request_response, strlen(bad_request_response));
+			}
+	        }
+    	}
+    close(sock);
+    return 0;
+}
+
+
+int main(int argc, char *argv[])
+{
+
+	struct sockaddr_in server, client;
+	int msock, csock;
+
+	directory = argv[2];
+	
+	/*Create a socket*/
+	msock = socket(AF_INET, SOCK_STREAM, 0);
+	if(msock < 0)
+	{
+		perror("Socket failed\n");
+		exit(1);
+	}
+
+	/*Socket Options*/
+	int enable = 1;
+	if (setsockopt(msock, SOL_SOCKET, SO_REUSEADDR, &enable, sizeof(enable)) < 0) 
+	{
+		perror("Failed to set sock option SO_REUSEADDR");
+	}
+
+	/*Server details*/
+	server.sin_family = AF_INET;
+	server.sin_addr.s_addr = inet_addr("127.0.0.1");
+	server.sin_port = htons(atoi(argv[1]));
+
+	/*Bind*/
+	int bnd = bind(msock, (struct sockaddr*)&server, sizeof(server));
+	if(bnd < 0)
+	{
+		perror("Bind failed\n");
+		exit(1);
+	}
+
+	/*Listen*/
+	listen(msock, 15);
+
+	/*Mulit-threading*/
+	pthread_t thread_id[THREADS];   		//Create 10 threads - han
+	pthread_attr_t thread_attr[THREADS];		//thread attributes
+	int att;
+
+	/*Initialize the threads and set its state to detached*/
+	for(att = 0; att < THREADS; att++)
+	{
+		pthread_attr_init(&thread_attr[att]);
+		pthread_attr_setdetachstate(&thread_attr[att], PTHREAD_CREATE_DETACHED);
+	}
+	att = 0;
+	
+	/*Accept*/
+	socklen_t client_len = sizeof(client);
+	char c_dst[client_len];
+	while((csock = accept(msock, (struct sockaddr*)&client, &client_len)) > 0)
+	{	
+		/*Print client IP and port numbers*/
+		inet_ntop(AF_INET, &(client.sin_addr.s_addr), c_dst, client_len);	
+		printf("\nClient IP = %s", c_dst);				
+		printf("\nClient port num = %d\n", ntohs(client.sin_port));	
+	
+		if(csock < 0)
+		{
+			perror("Failed to accept\n");
+			exit(1);
+		}
+	
+		/*Create a thread for every client request*/
+		if(pthread_create(&thread_id[att],  &thread_attr[att], handle_GET, (void *)&csock) < 0)
+		{
+			perror("Failed to create a thread\n");
+			exit(1);
+		}
+		
+		/*Free the thread attributes*/
+		pthread_attr_destroy(&thread_attr[att]);
+		att++;
+
+	}
+	
+	/*Close sockets and exit*/
+	close(csock);
+	close(msock);
+	return 0;
+}
+
+
+ 	
