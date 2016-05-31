@@ -1,9 +1,9 @@
 /*
-** This program scans the directories and sub-directories for the files. The file changes on the server are monitored
-** and the modified files if present in the cache access table are sent to the proxy using the sync_files function.
-** The modified file name is passed to the sync_files function. The function will then open the file and will send it to 
-** the proxy.
-** TODO- Mirroring the server directory in the proxy during the initial setup
+** Author: Dheeraj Dake
+** Date:   5/31/16
+** Description: This piece of code implements the file tree walk structure. It scans the files in a given directory and stores the file names,
+** 		last modified time(epoch time) and latest modified time. If any file changes are detected, those file names are taken into account.
+** 		If those files are accessed by the cache server, the files are automatically transferred to the cache proxy server. 
 */
 
 
